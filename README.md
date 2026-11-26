@@ -70,7 +70,7 @@ npm run demo "你的问题"
 
 ```bash
 export DEEPSEEK_API_KEY="sk-xxxxxxxx"
-export DEEPSEEK_MODEL="deepseek-chat"   # 可选，默认 deepseek-chat
+export DEEPSEEK_MODEL="deepseek-flash"   # 可选，默认 deepseek-flash；另一可选 deepseek-v4-pro
 # export DEEPSEEK_BASE_URL="https://api.deepseek.com"  # 可选，一般不用改
 npm start
 ```

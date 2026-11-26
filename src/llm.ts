@@ -58,7 +58,7 @@ export class DeepSeekLlm implements Llm {
   constructor(options: DeepSeekOptions) {
     this.apiKey = options.apiKey;
     this.baseUrl = (options.baseUrl ?? "https://api.deepseek.com").replace(/\/$/, "");
-    this.model = options.model ?? "deepseek-chat";
+    this.model = options.model ?? "deepseek-flash";
   }
 
   async chat(messages: readonly ChatMessage[], tools: readonly ToolDefinition[]): Promise<LlmReply> {
