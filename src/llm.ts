@@ -136,6 +136,120 @@ export class DeepSeekLlm implements Llm {
 }
 
 // ---------------------------------------------------------------------------
+// 真实模型：Anthropic Messages 协议（兼容中转站 /v1/messages，原生 tool_use 工具调用）
+// ---------------------------------------------------------------------------
+
+export interface AnthropicOptions {
+  apiKey: string;
+  baseUrl?: string;
+  model?: string;
+}
+
+interface AnthropicTextBlock {
+  type: "text";
+  text: string;
+}
+
+interface AnthropicToolUseBlock {
+  type: "tool_use";
+  id: string;
+  name: string;
+  input: Record<string, unknown>;
+}
+
+export class AnthropicLlm implements Llm {
+  private readonly apiKey: string;
+  private readonly baseUrl: string;
+  private readonly model: string;
+
+  constructor(options: AnthropicOptions) {
+    this.apiKey = options.apiKey;
+    this.baseUrl = (options.baseUrl ?? "http://127.0.0.1:3000/v1").replace(/\/$/, "");
+    this.model = options.model ?? "glm-5.3-flash";
+  }
+
+  async chat(messages: readonly ChatMessage[], tools: readonly ToolDefinition[]): Promise<LlmReply> {
+    // system 消息在 Anthropic 协议里是顶层参数，不进 messages 数组
+    const system = messages
+      .filter((m) => m.role === "system")
+      .map((m) => m.content)
+      .join("\n");
+
+    const anthMessages = messages
+      .filter((m) => m.role !== "system")
+      .map((m) => {
+        if (m.role === "tool") {
+          return {
+            role: "user" as const,
+            content: [
+              { type: "tool_result", tool_use_id: m.tool_call_id, content: m.content },
+            ],
+          };
+        }
+        if (m.role === "assistant") {
+          const blocks: Array<AnthropicTextBlock | AnthropicToolUseBlock> = [];
+          if (m.content) blocks.push({ type: "text", text: m.content });
+          for (const tc of m.tool_calls ?? []) {
+            blocks.push({
+              type: "tool_use",
+              id: tc.id,
+              name: tc.name,
+              input: tc.args ?? {},
+            });
+          }
+          return { role: "assistant" as const, content: blocks };
+        }
+        return { role: "user" as const, content: m.content };
+      });
+
+    const body = {
+      model: this.model,
+      max_tokens: 4096,
+      ...(system ? { system } : {}),
+      messages: anthMessages,
+      tools: tools.map((t) => ({
+        name: t.name,
+        description: t.description,
+        input_schema: t.parameters,
+      })),
+      stream: false,
+    };
+
+    const resp = await fetch(`${this.baseUrl}/messages`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": this.apiKey,
+        Authorization: `Bearer ${this.apiKey}`,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => "");
+      throw new Error(`Anthropic 接口返回 ${resp.status}: ${text.slice(0, 300)}`);
+    }
+
+    const data = (await resp.json()) as {
+      content?: Array<AnthropicTextBlock | AnthropicToolUseBlock>;
+    };
+
+    const blocks = data.content ?? [];
+    const content = blocks
+      .filter((b): b is AnthropicTextBlock => b.type === "text")
+      .map((b) => b.text)
+      .join("\n");
+
+    const tool_calls: ToolCall[] = blocks
+      .filter((b): b is AnthropicToolUseBlock => b.type === "tool_use")
+      .map((b) => ({ id: b.id, name: b.name, args: b.input ?? {} }));
+
+    return { content, tool_calls: tool_calls.length > 0 ? tool_calls : undefined };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // 离线脚本模型：没有密钥时用它跑通演示闭环
 // ---------------------------------------------------------------------------
 
@@ -163,17 +277,21 @@ export class StubLlm implements Llm {
 
 /**
  * 按环境变量自动选择模型：
- * 检测到 DEEPSEEK_API_KEY 就用真实模型，否则退回离线 Stub。
+ * 检测到 LLM_API_KEY（兼容旧名 DEEPSEEK_API_KEY）就用真实模型，否则退回离线 Stub。
+ * 协议由 LLM_PROTOCOL 选择：anthropic（默认走 /v1/messages，原生 tool_use）或 openai（/chat/completions）。
+ * 接入任意兼容中转都只改环境变量，不动代码。
  */
 export function createLlm(): Llm {
   loadEnvFile();
-  const apiKey = process.env.DEEPSEEK_API_KEY;
+  const apiKey = process.env.LLM_API_KEY ?? process.env.DEEPSEEK_API_KEY;
   if (apiKey) {
-    return new DeepSeekLlm({
+    const protocol = (process.env.LLM_PROTOCOL ?? "openai").toLowerCase();
+    const options = {
       apiKey,
-      baseUrl: process.env.DEEPSEEK_BASE_URL,
-      model: process.env.DEEPSEEK_MODEL,
-    });
+      baseUrl: process.env.LLM_BASE_URL ?? process.env.DEEPSEEK_BASE_URL,
+      model: process.env.LLM_MODEL ?? process.env.DEEPSEEK_MODEL,
+    };
+    return protocol === "anthropic" ? new AnthropicLlm(options) : new DeepSeekLlm(options);
   }
   return new StubLlm();
 }

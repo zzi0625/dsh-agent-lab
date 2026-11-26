@@ -4,6 +4,7 @@ export { Session } from "./session";
 export {
   createLlm,
   DeepSeekLlm,
+  AnthropicLlm,
   StubLlm,
   type Llm,
   type ChatMessage,

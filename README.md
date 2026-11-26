@@ -16,7 +16,7 @@
 ```
 dsh-agent-lab/
 ├── src/
-│   ├── llm.ts              # 模型接缝：Llm 接口 + DeepSeekLlm + 离线 StubLlm
+│   ├── llm.ts              # 模型接缝：Llm 接口 + OpenAI 兼容 / Anthropic 两种真实实现 + 离线 StubLlm
 │   ├── session.ts          # 会话消息记录，支持落盘 JSON
 │   ├── agent-loop.ts       # 调度闭环：推理 → 工具调用 → 回填 → 收敛
 │   ├── agents.ts           # Agent 装配层
@@ -66,14 +66,17 @@ npm run demo "你的问题"
 
 ### 5. 接入真实模型（可选）
 
-默认不设密钥时走离线 Stub 模型，也能跑通闭环。接入 DeepSeek 后由真实模型自己决定何时搜索：
+默认不设密钥时走离线 Stub 模型，也能跑通闭环。接入真实模型由模型自己决定何时搜索。配置写在项目根目录 `.env`（已被 `.gitignore` 排除，不提交 GitHub）：
 
 ```bash
-export DEEPSEEK_API_KEY="sk-xxxxxxxx"
-export DEEPSEEK_MODEL="deepseek-flash"   # 可选，默认 deepseek-flash；另一可选 deepseek-v4-pro
-# export DEEPSEEK_BASE_URL="https://api.deepseek.com"  # 可选，一般不用改
-npm start
+# 协议二选一：anthropic（/v1/messages，原生 tool_use）或 openai（/chat/completions）
+LLM_PROTOCOL=anthropic
+LLM_API_KEY=sk-xxxxxxxx
+LLM_BASE_URL=http://中转站地址/v1
+LLM_MODEL=glm-5.3-flash
 ```
+
+当前接入的是课程提供的 New API 中转，走 Anthropic Messages 协议，模型 `glm-5.3-flash`。切换其他兼容中转或模型，只改这四行环境变量，不动代码。
 
 密钥只通过环境变量注入，**不写进代码、不提交 GitHub**。
 
@@ -143,5 +146,6 @@ export const builtinPreset: ToolPlugin[] = [bashPlugin, webSearchPlugin, webFetc
 ## 七、已知限制
 
 - 搜索后端为 Bing 中文页解析，结果质量受搜索引擎影响；未接付费搜索 API。
-- 离线 Stub 模型只按脚本调用一次搜索，不会真正阅读结果；真实总结需接入 DeepSeek 模型。
+- 离线 Stub 模型只按脚本调用一次搜索，不会真正阅读结果；真实总结需在 `.env` 配置真实模型。
+- 中转下发的模型以接口 `/v1/models` 实际返回为准；OpenAI 兼容端点对部分上游模型的工具调用翻译不完整，本项目默认走 Anthropic Messages 端点获取原生 tool_use。
 - web-fetch 只返回纯文本正文，不解析图片、表格等结构化内容。
