@@ -7,6 +7,7 @@
 import readline from "node:readline";
 import { Agent } from "./agents";
 import type { LoopEvent } from "./agent-loop";
+import { loadEnvFile } from "./env";
 
 const BANNER = [
   "DDDD  SSSS  H   H",
@@ -15,15 +16,17 @@ const BANNER = [
   "D  D     S  H   H",
   "DDDD  SSSS  H   H",
   "",
-  "dsh agent-harness",
-  "/help 帮助 · Esc 取消 · Ctrl+C 退出",
+  "agent-harness",
+  "/help 帮助 · Esc 取消 · Ctrl+C 取消",
 ].join("\n");
+
+const GREEN = "\x1b[32m";
+const RESET = "\x1b[0m";
 
 function renderEvent(event: LoopEvent): void {
   if (event.type === "tool") {
     const args = JSON.stringify(event.args);
-    const dots = event.name === "web-search" ? "●" : "●";
-    console.log(`  ${dots} ${event.name} ${args} - ${event.elapsedMs} ms`);
+    console.log(`  ${GREEN}●${RESET} ${event.name} ${args} - ${event.elapsedMs} ms`);
   } else if (event.type === "final") {
     console.log(`\n${event.content}\n`);
   }
@@ -36,51 +39,62 @@ function helpText(tools: { name: string; description: string }[]): string {
   return lines.join("\n");
 }
 
+/** 底部状态栏展示的模型名：优先取环境变量配置，离线 stub 时显示 stub */
+function modelLabel(): string {
+  loadEnvFile();
+  return process.env.LLM_MODEL ?? process.env.DEEPSEEK_MODEL ?? "stub";
+}
+
 async function main(): Promise<void> {
   const agent = new Agent({ onEvent: renderEvent });
+  const statusLine = `${modelLabel()} · 就绪 · 待处理`;
 
   console.log(BANNER);
-  console.log(`已装载工具：${agent.registry.toolDefinitions().map((t) => t.name).join(", ")}`);
-  console.log(helpText(agent.registry.toolDefinitions()));
 
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  console.log("> ");
 
-  const ask = (): void => {
-    rl.question("\n> ", async (input) => {
-      const prompt = input.trim();
+  const handle = async (raw: string): Promise<void> => {
+    const prompt = raw.trim();
 
-      if (prompt === "/exit" || prompt === "quit") {
-        rl.close();
-        return;
-      }
-      if (prompt === "/help") {
-        console.log(helpText(agent.registry.toolDefinitions()));
-        ask();
-        return;
-      }
-      if (!prompt) {
-        ask();
-        return;
-      }
+    if (prompt === "/exit" || prompt === "quit") {
+      rl.close();
+      return;
+    }
+    if (prompt === "/help") {
+      console.log(helpText(agent.registry.toolDefinitions()));
+      console.log("> ");
+      return;
+    }
+    if (!prompt) {
+      console.log("> ");
+      return;
+    }
 
-      try {
-        const session = await agent.run(prompt);
-        const file = session.dump("logs");
-        console.log(`[会话已落盘] ${file}`);
-      } catch (err) {
-        console.error(`[运行出错] ${err instanceof Error ? err.message : String(err)}`);
-      }
-
-      ask();
-    });
+    try {
+      const session = await agent.run(prompt);
+      const file = session.dump(".dsh/sessions");
+      console.log("本轮完成");
+      console.log(statusLine);
+      console.log(`> ${file}`);
+    } catch (err) {
+      console.error(`[运行出错] ${err instanceof Error ? err.message : String(err)}`);
+    }
+    console.log("> ");
   };
 
-  rl.on("close", () => {
-    console.log("\n再见。");
-    process.exit(0);
+  // 串行排队处理输入行；关闭时等当前这轮跑完再退出，避免管道/EOF 抢先结束
+  let chain = Promise.resolve();
+  rl.on("line", (raw) => {
+    chain = chain.then(() => handle(raw));
   });
 
-  ask();
+  rl.on("close", () => {
+    chain.finally(() => {
+      console.log("\n再见。");
+      process.exit(0);
+    });
+  });
 }
 
 main().catch((err) => {
