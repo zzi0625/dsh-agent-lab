@@ -1,0 +1,17 @@
+{
+  "name": "dsh-agent-lab",
+  "version": "0.1.0",
+  "private": true,
+  "description": "实验四：web-search / web-fetch 插件 + preset 插件注册 + TUI 闭环",
+  "scripts": {
+    "start": "ts-node src/tui.ts",
+    "demo": "ts-node src/demo.ts",
+    "test": "ts-node src/error-test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.6.0"
+  }
+}
